@@ -30,7 +30,7 @@ interface ChatMessage {
 }
 
 const TOOL_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
-  search_start: { icon: '🔍', color: '#60a5fa', label: 'Searching Brave Web' },
+  search_start: { icon: '🔍', color: '#60a5fa', label: 'Searching Tavily Web' },
   search_done: { icon: '🌐', color: '#34d399', label: 'Search Completed' },
   recall_start: { icon: '🧠', color: '#c084fc', label: 'Consulting Personal Memory' },
   recall_done: { icon: '📋', color: '#a78bfa', label: 'Memory Recalled' },
@@ -107,7 +107,7 @@ export default function Chat({ onLogout }: { onLogout: () => void }) {
   const [sessions, setSessions] = useState<any[]>([]);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [userProfileData, setUserProfileData] = useState<{ profile: any; facts: any[] } | null>(null);
-  const [stats, setStats] = useState<{ brave_calls_this_month: number } | null>(null);
+  const [stats, setStats] = useState<{ search_calls_this_month?: number; brave_calls_this_month?: number } | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const username = getStoredUsername();
@@ -263,7 +263,7 @@ export default function Chat({ onLogout }: { onLogout: () => void }) {
           </div>
           <div>
             <div style={{ fontWeight: 700, fontSize: '15px', color: '#f8fafc' }}>Antigravity Agent</div>
-            <div style={{ fontSize: '11px', color: '#64748b' }}>Brave Search & Memory</div>
+            <div style={{ fontSize: '11px', color: '#64748b' }}>Tavily Search & Memory</div>
           </div>
         </div>
 
@@ -425,7 +425,7 @@ export default function Chat({ onLogout }: { onLogout: () => void }) {
               gap: '6px'
             }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e' }}></span>
-              Brave Search Calls: <strong style={{ color: '#f8fafc' }}>{stats?.brave_calls_this_month ?? 0}</strong> / 1000
+              Tavily Search Calls: <strong style={{ color: '#f8fafc' }}>{stats?.search_calls_this_month ?? stats?.brave_calls_this_month ?? 0}</strong> / 1000
             </div>
           </div>
         </div>

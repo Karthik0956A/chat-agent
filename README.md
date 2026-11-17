@@ -1,6 +1,6 @@
 # Antigravity Chat Agent (Web Search + 3-Layer Persistent Memory + RL Loop)
 
-A chat agent built with **Gemini**, **Brave Search**, **Node.js/TypeScript**, **SQLite**, and **React**.
+A chat agent built with **Gemini**, **Tavily Search API**, **Node.js/TypeScript**, **SQLite**, and **React**.
 
 Unlike traditional stateless chat agents that re-query the web blindly and forget everything between turns, this agent features **3-Layer Memory**, **transparent real-time tool reasoning**, **smart query batching with 6-hour caching**, and a **per-user reinforcement learning feedback loop**.
 
@@ -21,7 +21,7 @@ cp .env.example .env
 Add your API keys in `.env`:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
-BRAVE_API_KEY=your_brave_search_api_key_here
+TAVILY_API_KEY=your_tavily_api_key_here
 ```
 *(If no API keys are provided immediately, the agent still runs and provides local mock search and fallback responses so you can inspect the full UI and database architecture).*
 
@@ -47,9 +47,9 @@ Planner (Gemini Flash)
   ├─ Decides: recall / search / verify-stale / compare / converse
   │
   ├── [recall]       → Fact Store (SQLite + Cosine Similarity over Embeddings)
-  ├── [search]       → Brave Search API (6h cache, OR-batching)
-  ├── [verify-stale] → Brave (re-searches entity, diffs against stored facts)
-  └── [compare]      → Batched Brave Search ("A OR B OR C pricing")
+  ├── [search]       → Tavily Search API (6h cache, OR-batching)
+  ├── [verify-stale] → Tavily (re-searches entity, diffs against stored facts)
+  └── [compare]      → Batched Tavily Search ("A OR B OR C pricing")
      │
      ▼
 Synthesizer (Gemini Flash / Pro)
@@ -69,7 +69,7 @@ Per-User Reinforcement Learning Loop
 1. **Multi-entity comparison & staleness:**
    > *"On Monday we shortlisted 5 CRM tools for a 20-person sales team. Has any of them changed pricing or shipped something big since?"*
    - Recalls shortlisted entities from personal memory.
-   - Re-searches via a single OR-batched Brave query.
+   - Re-searches via a single OR-batched Tavily query.
    - Diffs current search results against previously recorded claims.
 
 2. **Session history & date recall:**
@@ -80,7 +80,7 @@ Per-User Reinforcement Learning Loop
 3. **Staleness detection on time-sensitive topics:**
    > *"Last Tuesday I asked you about Postgres hosting. Has any pricing changed since then?"*
    - Recalls previously discussed hosting providers.
-   - Re-verifies pricing against live Brave search results and highlights changes.
+   - Re-verifies pricing against live Tavily search results and highlights changes.
 
 ---
 
@@ -93,7 +93,7 @@ Per-User Reinforcement Learning Loop
 │   ├── auth.ts               # JWT authentication & multi-user isolation
 │   ├── planner.ts            # Gemini tool calling & reasoning planner
 │   ├── synthesizer.ts        # Streaming answer synthesis & fact extraction
-│   ├── search.ts             # Brave Search API wrapper + 6h cache + batching
+│   ├── search.ts             # Tavily Search API wrapper + 6h cache + batching
 │   ├── embeddings.ts         # text-embedding-004 cosine similarity
 │   ├── memory/
 │   │   ├── history.ts        # 15-day conversation history + LRU session cache

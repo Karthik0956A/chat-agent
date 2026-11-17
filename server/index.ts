@@ -20,7 +20,7 @@ import { upsertFact } from './memory/facts';
 import { recordFeedback } from './memory/feedback';
 import { runCompressionJob } from './memory/compression';
 import { embedText } from './embeddings';
-import { getBraveUsageCount } from './search';
+import { getSearchUsageCount } from './search';
 import db from './db';
 
 const app = express();
@@ -173,8 +173,10 @@ app.post('/api/feedback', (req, res) => {
 });
 
 app.get('/api/stats', (_req, res) => {
+  const count = getSearchUsageCount();
   res.json({
-    brave_calls_this_month: getBraveUsageCount(),
+    search_calls_this_month: count,
+    brave_calls_this_month: count,
     timestamp: new Date().toISOString()
   });
 });

@@ -60,7 +60,7 @@ export interface ToolEvent {
 }
 
 export interface PlannerTool {
-  name: 'brave_search' | 'recall_facts' | 'search_history';
+  name: 'web_search' | 'brave_search' | 'recall_facts' | 'search_history';
   args: Record<string, unknown>;
   intent: 'new_info' | 'verify_stale' | 'compare' | 'recall' | 'history';
 }

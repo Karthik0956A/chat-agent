@@ -2,7 +2,7 @@
 
 ## How It Works
 
-This is a stateful web-based chat agent backed by Gemini and Brave Search. Its core insight is that **most chat agents have no memory**. Ours has three layers of it.
+This is a stateful web-based chat agent backed by Gemini and Tavily Search API. Its core insight is that **most chat agents have no memory**. Ours has three layers of it.
 
 ### Request Flow
 
@@ -16,9 +16,9 @@ Planner (Gemini Flash, function-calling)
   │          intents: recall / search / verify-stale / compare / converse
   │
   ├──[recall]        → Fact Store (SQLite + cosine similarity over embeddings)
-  ├──[search]        → Brave Search API (6h result cache, OR-batched for multi-entity)
-  ├──[verify-stale]  → Brave (re-searches entity, diffs against stored fact)
-  └──[compare]       → Brave (single OR-query for N entities, e.g. "A OR B OR C pricing")
+  ├──[search]        → Tavily Search API (6h result cache, OR-batched for multi-entity)
+  ├──[verify-stale]  → Tavily (re-searches entity, diffs against stored fact)
+  └──[compare]       → Tavily (single OR-query for N entities, e.g. "A OR B OR C pricing")
      │
      ▼
 Synthesizer (Gemini Flash, streaming)
@@ -79,14 +79,14 @@ Over time, each user's agent learns which facts are valuable to *them* and surfa
 
 ## Search Budget & Efficiency
 
-Brave Free tier: 1000 req/month. Two accounts (dev + prod).
+Powered by Tavily API (with automatic fallback to Brave / mock search).
 
 Efficiency mechanisms:
-1. **6-hour result cache** in SQLite — same query within a session = 0 Brave calls.
+1. **6-hour result cache** in SQLite — same query within a session = 0 external search calls.
 2. **OR-batching** — "5 CRM tools" → `Salesforce OR HubSpot OR Pipedrive OR Freshsales OR Zoho pricing 2026` = 1 call.
 3. **Lazy staleness checks** — only triggered when the user asks something time-sensitive, not proactively.
 
-With caching + batching, 1000 raw Brave calls serve ~3,000–5,000 effective user queries.
+With caching + batching, 1000 raw search calls serve ~3,000–5,000 effective user queries.
 
 ---
 
@@ -107,7 +107,7 @@ With caching + batching, 1000 raw Brave calls serve ~3,000–5,000 effective use
 
 1. **Background staleness sweeper** — proactively re-verify high-importance facts for all users nightly, not just on demand.
 2. **Citation rendering** — inline footnotes with source URLs, expandable in UI.
-3. **Search query learning** — track which Brave query templates yielded good answers (by feedback signal) and prefer them for similar future queries.
+3. **Search query learning** — track which Tavily query templates yielded good answers (by feedback signal) and prefer them for similar future queries.
 4. **Multi-turn entity threading** — explicitly track "this conversation is about these 5 CRM tools" so the Planner doesn't have to re-infer entities from scratch each turn.
 5. **Export / share session** — let users share a conversation as a permalink.
 6. **Eval harness** — automated tests against the 3 benchmark question types with synthetic sessions.

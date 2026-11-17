@@ -1,7 +1,7 @@
 # Implementation Plan — Chat Agent (C+F+RL Hybrid)
 
 > **For the building agent**: Follow phases in order. Each phase is independently testable. Do not skip ahead.
-> **Stack**: TypeScript, Node.js, Express, React (Vite), SQLite (better-sqlite3), Gemini API, Brave Search API
+> **Stack**: TypeScript, Node.js, Express, React (Vite), SQLite, Gemini API, Tavily Search API
 > **Repo root**: `d:\minimi`
 
 ---
@@ -74,10 +74,8 @@
 # Gemini API — https://aistudio.google.com/app/apikey
 GEMINI_API_KEY=your_gemini_api_key_here
 
-# Brave Search API — https://api.search.brave.com/
-# Use your TEST account key during development
-# Evaluators should paste their own key here
-BRAVE_API_KEY=your_brave_search_api_key_here
+# Tavily Search API — https://tavily.com/
+TAVILY_API_KEY=your_tavily_api_key_here
 
 # JWT secret — change to any random string in production
 JWT_SECRET=change_me_to_a_random_string
@@ -639,32 +637,43 @@ import { SearchResult } from './types';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const BRAVE_API_KEY = process.env.BRAVE_API_KEY!;
 const CACHE_TTL_HOURS = 6;
 
-async function callBraveAPI(query: string): Promise<SearchResult[]> {
-  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10&search_lang=en`;
-  const res = await fetch(url, {
-    headers: {
-      'Accept': 'application/json',
-      'Accept-Encoding': 'gzip',
-      'X-Subscription-Token': BRAVE_API_KEY
-    }
+async function callTavilyAPI(query: string): Promise<SearchResult[]> {
+  const apiKey = process.env.TAVILY_API_KEY || process.env.BRAVE_API_KEY;
+  if (!apiKey || apiKey === 'your_tavily_api_key_here') {
+    return [
+      {
+        title: `Search results for: ${query}`,
+        url: `https://tavily.com/search?q=${encodeURIComponent(query)}`,
+        description: `Tavily preview for "${query}". Set TAVILY_API_KEY in .env for live search.`,
+        age: 'just now'
+      }
+    ];
+  }
+
+  const { tavily } = await import('@tavily/core');
+  const client = tavily({ apiKey });
+  const response = await client.search(query, {
+    searchDepth: 'advanced',
+    includeFavicon: true,
+    includeUsage: true,
+    maxResults: 8
   });
-  if (!res.ok) throw new Error(`Brave API error: ${res.status} ${await res.text()}`);
 
-  const data = await res.json() as any;
-  db.prepare('INSERT INTO brave_usage (query) VALUES (?)').run(query);
+  try {
+    db.prepare('INSERT INTO search_usage (query, provider) VALUES (?, ?)').run(query, 'tavily');
+  } catch {}
 
-  return (data.web?.results || []).map((r: any) => ({
-    title: r.title,
-    url: r.url,
-    description: r.description || r.extra_snippets?.join(' ') || '',
-    age: r.age
+  return (response.results || []).map((r: any) => ({
+    title: r.title || 'Untitled',
+    url: r.url || '',
+    description: r.content || '',
+    age: r.publishedDate || ''
   }));
 }
 
-export async function braveSearch(query: string): Promise<SearchResult[]> {
+export async function webSearch(query: string): Promise<SearchResult[]> {
   const hash = crypto.createHash('md5').update(query.toLowerCase().trim()).digest('hex');
   const now = new Date().toISOString();
 
@@ -673,13 +682,10 @@ export async function braveSearch(query: string): Promise<SearchResult[]> {
   ).get(hash, now) as any;
 
   if (cached) {
-    console.log(`[search] Cache hit: "${query}"`);
     return JSON.parse(cached.results);
   }
 
-  console.log(`[search] Brave API call: "${query}"`);
-  const results = await callBraveAPI(query);
-
+  const results = await callTavilyAPI(query);
   const expiresAt = new Date(Date.now() + CACHE_TTL_HOURS * 3600 * 1000).toISOString();
   db.prepare(`
     INSERT OR REPLACE INTO search_cache (query_hash, query, results, created_at, expires_at)
@@ -689,16 +695,18 @@ export async function braveSearch(query: string): Promise<SearchResult[]> {
   return results;
 }
 
+export const braveSearch = webSearch;
+
 export function buildBatchQuery(entities: string[], suffix: string): string {
-  return entities.map(e => e.trim()).join(' OR ') + (suffix ? ` ${suffix}` : '');
+  return entities.map(e => e.trim()).filter(Boolean).join(' OR ') + (suffix ? ` ${suffix}` : '');
 }
 
-export function getBraveUsageCount(): number {
-  const row = db.prepare(`
-    SELECT COUNT(*) as count FROM brave_usage
-    WHERE created_at > datetime('now', 'start of month')
-  `).get() as any;
-  return row.count;
+export function getSearchUsageCount(): number {
+  try {
+    const row = db.prepare(`SELECT COUNT(*) as count FROM search_usage WHERE created_at > datetime('now', 'start of month')`).get() as any;
+    if (row && Number(row.count) > 0) return Number(row.count);
+  } catch {}
+  return 0;
 }
 ```
 

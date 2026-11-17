@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI, FunctionDeclaration, SchemaType } from '@google/generative-ai';
 import { getRecentTurns, getUserProfile, searchHistory } from './memory/history';
 import { searchFacts, getFactsByEntity } from './memory/facts';
-import { braveSearch } from './search';
+import { webSearch } from './search';
 import { embedText } from './embeddings';
 import { Message, ToolEvent, SearchResult, Fact } from './types';
 import dotenv from 'dotenv';
@@ -9,8 +9,8 @@ dotenv.config();
 
 const TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
-    name: 'brave_search',
-    description: 'Search the web for current information. Use OR operator to batch multiple entities into one query (e.g. "Salesforce OR HubSpot pricing 2026").',
+    name: 'web_search',
+    description: 'Search the live web using Tavily for current information. Use OR operator to batch multiple entities into one query (e.g. "Salesforce OR HubSpot pricing 2026").',
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
@@ -100,7 +100,7 @@ export async function runPlanner(
 
     if (isSearchQuery) {
       onToolEvent({ type: 'search_start', query: userMessage });
-      const results = await braveSearch(userMessage);
+      const results = await webSearch(userMessage);
       searchResults.push(...results);
       onToolEvent({ type: 'search_done', query: userMessage, resultCount: results.length });
     }
@@ -139,11 +139,11 @@ Your job: analyze the user's message and decide what tools to call.
     const functionCalls = result.response.functionCalls() || [];
 
     for (const call of functionCalls) {
-      if (call.name === 'brave_search') {
+      if (call.name === 'web_search' || call.name === 'brave_search') {
         const { query, intent } = call.args as any;
         onToolEvent({ type: intent === 'verify_stale' ? 'verify_start' : 'search_start', query });
 
-        const results = await braveSearch(query);
+        const results = await webSearch(query);
         searchResults.push(...results);
         toolResults[`search:${query}`] = results;
 
