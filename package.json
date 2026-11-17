@@ -4,7 +4,7 @@
   "description": "Chat agent with web search, persistent memory, and per-user RL feedback",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:server": "tsx --experimental-sqlite watch server/index.ts",
+    "dev:server": "node --watch --experimental-sqlite --import tsx server/index.ts",
     "dev:client": "vite --config vite.config.ts",
     "build": "tsc -p server/tsconfig.json && vite build --config vite.config.ts",
     "start": "node --experimental-sqlite dist/server/index.js"
