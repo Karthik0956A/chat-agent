@@ -1,8 +1,8 @@
-# Antigravity Chat Agent (Web Search + 3-Layer Persistent Memory + RL Loop)
+﻿# Chat Agent (Live Web Search + 3-Layer Persistent Memory + RL Loop)
 
-A chat agent built with **Gemini**, **Tavily Search API**, **Node.js/TypeScript**, **SQLite**, and **React**.
+A production-grade AI chat agent built with **Gemini Flash**, **Tavily Search**, **Node.js/TypeScript**, **SQLite**, and **React**.
 
-Unlike traditional stateless chat agents that re-query the web blindly and forget everything between turns, this agent features **3-Layer Memory**, **transparent real-time tool reasoning**, **smart query batching with 6-hour caching**, and a **per-user reinforcement learning feedback loop**.
+Unlike stateless chat agents that re-query blindly and forget between turns, this agent features **Gemini-optimized search queries**, **3-layer persistent memory**, **transparent real-time tool reasoning**, **per-session history loading**, **honest date recall (no hallucination)**, and a **per-user reinforcement learning feedback loop**.
 
 ---
 
@@ -34,33 +34,67 @@ npm run dev
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 For full design trade-offs, benchmarks, and rejected alternatives, read [DESIGN.md](./DESIGN.md).
 
 ```
 User Message
-     │
-     ▼
-Planner (Gemini Flash)
-  ├─ Reads: Active session turns (LRU Cache) + Long-term Profile + Clock
-  ├─ Decides: recall / search / verify-stale / compare / converse
-  │
-  ├── [recall]       → Fact Store (SQLite + Cosine Similarity over Embeddings)
-  ├── [search]       → Tavily Search API (6h cache, OR-batching)
-  ├── [verify-stale] → Tavily (re-searches entity, diffs against stored facts)
-  └── [compare]      → Batched Tavily Search ("A OR B OR C pricing")
-     │
-     ▼
-Synthesizer (Gemini Flash / Pro)
-  ├─ Streams token-by-token over SSE
-  ├─ Narrates diffs explicitly ("Previously $49/mo → now $65/mo")
-  └─ Extracts high-value facts (importance ≥ 0.6) into vector fact store
-     │
-     ▼
-Per-User Reinforcement Learning Loop
-  └─ User feedback (👍/👎, corrections) re-ranks entity weights for that user only
+      |
+      v
++---------------------------------------+
+|  STAGE 1: FAST-PATH INTENT ROUTER     |  <- Instant heuristic (0ms)
+|  Detects: search / history / recall   |     No LLM call for obvious intents
++-------------------+-------------------+
+                    |
+                    v
++---------------------------------------+
+|  STAGE 2: GEMINI QUERY OPTIMIZER      |  <- NEW: Rewrites raw user text
+|  buildSearchQuery() -> dorked query   |     site:, quotes, date filters,
+|  2.5s timeout -> fallback to raw      |     OR-batching for multi-entity
++-------------------+-------------------+
+                    |
+        +-----------+----------+
+        v           v          v
+    Tavily      SQLite      Gemini
+    Search      15-day      Embedding
+    API         History     Search
+    (6h cache)  (per-user)  (cosine sim)
+        |           |          |
+        +-----------+----------+
+                    |
+                    v
++---------------------------------------+
+|  STAGE 3: GEMINI SYNTHESIZER          |  <- SSE token-by-token streaming
+|  - Narrates diffs (prev X -> now Y)   |     Honest when history is empty
+|  - Cites sources inline [1][2]        |     (never hallucinates past convos)
+|  - Extracts <FACTS> for persistence   |
++-------------------+-------------------+
+                    |
+                    v
++---------------------------------------+
+|  STAGE 4-5: MEMORY WRITE-BACK         |
+|  - Facts (importance >= 0.6)          |
+|    -> SQLite + Gemini vector embed    |
+|  - Per-user RL feedback loop          |
+|    (thumbs up/down re-ranks weights)  |
+|  - Nightly cron: 15-day history       |
+|    compressed into long-term profile  |
++---------------------------------------+
 ```
+
+**Stack at a glance:**
+
+| Layer | Technology |
+|-------|-----------|
+| LLM | Gemini Flash (planner + synthesizer + query optimizer + embeddings) |
+| Search | Tavily API · 6-hour SQLite cache · OR-batching |
+| Memory | LRU cache -> 15-day SQLite history -> compressed long-term profile |
+| Vector DB | SQLite + gemini-embedding-001 cosine similarity (3072-dim) |
+| Auth | JWT · bcrypt · strict WHERE user_id = ? row isolation |
+| Streaming | Express SSE -> React fetch ReadableStream |
+| Frontend | React + Vite + react-markdown (GFM) · per-session history loading |
+| Scheduler | node-cron nightly compression job |
 
 ---
 
