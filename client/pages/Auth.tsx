@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { login, signup, setAuth } from '../api';
+import { login, signup, setAuth } from '../services/api';
 
 export default function Auth({ onAuth }: { onAuth: () => void }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -63,13 +63,58 @@ export default function Auth({ onAuth }: { onAuth: () => void }) {
             ⚡
           </div>
           <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#f8fafc', marginBottom: '6px' }}>
-            {isLogin ? 'Welcome Back' : 'Create an Account'}
+            {isLogin ? 'Sign In' : 'Create an Account'}
           </h1>
           <p style={{ fontSize: '14px', color: '#94a3b8' }}>
             {isLogin
-              ? 'Sign in to access your persistent memory & chat'
+              ? 'Access your private sessions & persistent memory'
               : 'Join to start private session-aware research'}
           </p>
+        </div>
+
+        {/* Tab Switcher */}
+        <div style={{
+          display: 'flex',
+          backgroundColor: '#0d0f12',
+          padding: '4px',
+          borderRadius: '10px',
+          marginBottom: '20px',
+          border: '1px solid #232936'
+        }}>
+          <button
+            type="button"
+            onClick={() => { setIsLogin(true); setError(''); }}
+            style={{
+              flex: 1,
+              padding: '8px',
+              borderRadius: '7px',
+              border: 'none',
+              backgroundColor: isLogin ? '#1e2430' : 'transparent',
+              color: isLogin ? '#f8fafc' : '#94a3b8',
+              fontWeight: isLogin ? 600 : 400,
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => { setIsLogin(false); setError(''); }}
+            style={{
+              flex: 1,
+              padding: '8px',
+              borderRadius: '7px',
+              border: 'none',
+              backgroundColor: !isLogin ? '#1e2430' : 'transparent',
+              color: !isLogin ? '#f8fafc' : '#94a3b8',
+              fontWeight: !isLogin ? 600 : 400,
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            Create Account
+          </button>
         </div>
 
         {error && (

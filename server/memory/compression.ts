@@ -35,7 +35,7 @@ async function compressUserHistory(genAI: GoogleGenerativeAI, userId: number, cu
   if (oldMessages.length === 0) return;
 
   const transcript = oldMessages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
-  const model = genAI.getGenerativeModel({ model: process.env.PLANNER_MODEL || 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: process.env.PLANNER_MODEL || 'gemini-3-flash-preview' });
 
   const prompt = `Analyze this conversation history and extract:
 1. A 2-3 sentence summary of what this user cares about and their goals

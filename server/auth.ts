@@ -21,6 +21,7 @@ export function signToken(userId: number, username: string): string {
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) {
+    console.warn(`[auth] 401 Unauthorized on ${req.method} ${req.originalUrl || req.url}: missing or invalid Authorization header`);
     res.status(401).json({ error: 'Unauthorized: missing or invalid Authorization header' });
     return;
   }
@@ -29,7 +30,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     (req as any).userId = payload.userId;
     (req as any).username = payload.username;
     next();
-  } catch {
+  } catch (err: any) {
+    console.warn(`[auth] 401 Unauthorized on ${req.method} ${req.originalUrl || req.url}: token verification failed (${err.message})`);
     res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
@@ -61,7 +63,8 @@ export function handleLogin(req: Request, res: Response): void {
   const { username, password } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
   if (!user || !verifyPassword(password, user.password_hash)) {
-    res.status(401).json({ error: 'Invalid username or password' });
+    console.warn(`[auth] Login failed for "${username}" (user exists: ${!!user})`);
+    res.status(401).json({ error: user ? 'Invalid password' : 'User does not exist. Please create an account first!' });
     return;
   }
 

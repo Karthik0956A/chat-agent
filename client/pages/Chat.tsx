@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import MarkdownMessage from '../components/MarkdownMessage';
 import {
   streamChat,
   sendFeedback,
@@ -7,8 +8,9 @@ import {
   getProfile,
   getStats,
   clearAuth,
-  getStoredUsername
-} from '../api';
+  getStoredUsername,
+  getMessages
+} from '../services/api';
 
 interface ToolEvent {
   type: string;
@@ -81,23 +83,6 @@ function ToolStrip({ events }: { events: ToolEvent[] }) {
   );
 }
 
-function renderFormattedMessage(text: string) {
-  const lines = text.split('\n');
-  return lines.map((line, i) => {
-    // Bold formatting **text**
-    const parts = line.split(/(\*\*.*?\*\*)/g);
-    return (
-      <div key={i} style={{ minHeight: '1.2em' }}>
-        {parts.map((p, j) => {
-          if (p.startsWith('**') && p.endsWith('**')) {
-            return <strong key={j} style={{ color: '#f8fafc', fontWeight: 600 }}>{p.slice(2, -2)}</strong>;
-          }
-          return p;
-        })}
-      </div>
-    );
-  });
-}
 
 export default function Chat({ onLogout }: { onLogout: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -146,16 +131,22 @@ export default function Chat({ onLogout }: { onLogout: () => void }) {
     setMessages([]);
   };
 
-  const selectSession = (sid: string) => {
+  const selectSession = async (sid: string) => {
     if (isStreaming || sid === sessionId) return;
     setSessionId(sid);
-    setMessages([
-      {
-        role: 'assistant',
-        content: `Resumed session ${sid.slice(0, 8)}... Your conversation history and extracted facts from this thread are loaded in memory.`,
-        toolEvents: []
-      }
-    ]);
+    setMessages([{ role: 'assistant', content: '...', toolEvents: [], streaming: true }]);
+    try {
+      const rows = await getMessages(sid);
+      const loaded: ChatMessage[] = rows.map((r: any) => ({
+        id: r.id,
+        role: r.role as 'user' | 'assistant',
+        content: r.content,
+        toolEvents: Array.isArray(r.tool_events) ? r.tool_events : [],
+      }));
+      setMessages(loaded.length > 0 ? loaded : [{ role: 'assistant', content: 'No messages found in this session.', toolEvents: [] }]);
+    } catch (err) {
+      setMessages([{ role: 'assistant', content: 'Failed to load session history.', toolEvents: [] }]);
+    }
   };
 
   const handleFeedbackClick = async (msgIndex: number, messageId: number | undefined, signal: 1 | -1) => {
@@ -262,8 +253,8 @@ export default function Chat({ onLogout }: { onLogout: () => void }) {
             ⚡
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '15px', color: '#f8fafc' }}>Antigravity Agent</div>
-            <div style={{ fontSize: '11px', color: '#64748b' }}>Tavily Search & Memory</div>
+            <div style={{ fontWeight: 700, fontSize: '15px', color: '#f8fafc' }}>Chat Agent</div>
+            <div style={{ fontSize: '11px', color: '#64748b' }}>Web Search & Memory</div>
           </div>
         </div>
 
@@ -505,18 +496,21 @@ export default function Chat({ onLogout }: { onLogout: () => void }) {
                     {!isUser && <ToolStrip events={msg.toolEvents} />}
 
                     <div style={{
-                      maxWidth: '85%',
-                      padding: '14px 18px',
+                      maxWidth: '88%',
+                      padding: isUser ? '12px 18px' : '16px 20px',
                       borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                      backgroundColor: isUser ? '#4f46e5' : '#161922',
+                      backgroundColor: isUser ? '#4f46e5' : '#141822',
                       border: isUser ? 'none' : '1px solid #232a3b',
                       color: '#f8fafc',
                       fontSize: '14px',
-                      lineHeight: 1.6,
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                      lineHeight: 1.65,
+                      boxShadow: '0 4px 14px rgba(0,0,0,0.15)'
                     }}>
-                      {renderFormattedMessage(msg.content)}
-                      {msg.streaming && <span style={{ opacity: 0.7, color: '#818cf8', fontWeight: 'bold' }}> ▍</span>}
+                      {isUser ? (
+                        <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                      ) : (
+                        <MarkdownMessage content={msg.content} isStreaming={msg.streaming} />
+                      )}
                     </div>
 
                     {!isUser && !msg.streaming && msg.id && (

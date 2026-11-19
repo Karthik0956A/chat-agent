@@ -18,6 +18,11 @@ export function clearAuth() {
   localStorage.removeItem('username');
 }
 
+export function notifyUnauthorized() {
+  clearAuth();
+  window.dispatchEvent(new Event('auth:unauthorized'));
+}
+
 function authHeaders(): Record<string, string> {
   const token = getToken();
   return {
@@ -54,18 +59,30 @@ export async function signup(username: string, password: string) {
 
 export async function getSessions() {
   const res = await fetch(`${BASE}/sessions`, { headers: authHeaders() });
+  if (res.status === 401) {
+    notifyUnauthorized();
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) throw new Error('Failed to fetch sessions');
   return res.json();
 }
 
 export async function getProfile() {
   const res = await fetch(`${BASE}/profile`, { headers: authHeaders() });
+  if (res.status === 401) {
+    notifyUnauthorized();
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) throw new Error('Failed to fetch profile');
   return res.json();
 }
 
 export async function getStats() {
   const res = await fetch(`${BASE}/stats`, { headers: authHeaders() });
+  if (res.status === 401) {
+    notifyUnauthorized();
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) throw new Error('Failed to fetch stats');
   return res.json();
 }
@@ -85,6 +102,11 @@ export function streamChat(
   })
     .then(async (res) => {
       if (!res.ok) {
+        if (res.status === 401) {
+          notifyUnauthorized();
+          onEvent({ event: 'error', data: { message: 'Authentication expired. Please log in again.' } });
+          return;
+        }
         const err = await res.json().catch(() => ({}));
         onEvent({ event: 'error', data: { message: err.error || 'Server error' } });
         return;
@@ -93,6 +115,7 @@ export function streamChat(
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let currentEvent = 'message';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -101,7 +124,6 @@ export function streamChat(
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
-        let currentEvent = 'message';
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             currentEvent = line.slice(7).trim();
@@ -123,6 +145,13 @@ export function streamChat(
     });
 
   return () => controller.abort();
+}
+
+export async function getMessages(sessionId: string) {
+  const res = await fetch(`${BASE}/messages/${sessionId}`, { headers: authHeaders() });
+  if (res.status === 401) { notifyUnauthorized(); throw new Error('Unauthorized'); }
+  if (!res.ok) throw new Error('Failed to fetch messages');
+  return res.json();
 }
 
 export async function sendFeedback(messageId: number, signal: 1 | -1) {

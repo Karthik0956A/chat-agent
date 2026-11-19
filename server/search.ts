@@ -4,6 +4,34 @@ import { SearchResult } from './types';
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+async function buildSearchQuery(userQuestion: string): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'your_gemini_api_key_here') return userQuestion;
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3-flash-preview',
+      generationConfig: {
+        maxOutputTokens: 100,
+        // @ts-ignore
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    });
+    const prompt = `Convert this user question into an optimized web search query. Use advanced techniques: site: operators for authoritative sources when relevant, quotes for exact phrases, date hints for time-sensitive queries (append year ${new Date().getFullYear()}), OR for alternatives, -term to exclude noise. Return ONLY the final search query string, nothing else, no explanation.\n\nUser question: "${userQuestion}"`;
+    const result = await Promise.race([
+      model.generateContent(prompt),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('buildSearchQuery timeout')), 2500))
+    ]) as any;
+    const optimized = result.response.text().trim().replace(/^["']|["']$/g, '');
+    if (optimized && optimized.length > 0) return optimized;
+  } catch (err: any) {
+    console.warn(`[search] buildSearchQuery notice: ${err?.message}. Using raw query.`);
+  }
+  return userQuestion;
+}
+
 const CACHE_TTL_HOURS = 6;
 
 async function callTavilyAPI(query: string): Promise<SearchResult[]> {
@@ -23,12 +51,20 @@ async function callTavilyAPI(query: string): Promise<SearchResult[]> {
   const { tavily } = await import('@tavily/core');
   const client = tavily({ apiKey });
 
-  const response = await client.search(query, {
-    searchDepth: 'advanced',
-    includeFavicon: true,
-    includeUsage: true,
-    maxResults: 8
-  });
+  let response: any;
+  try {
+    const searchPromise = client.search(query, {
+      searchDepth: 'basic',
+      maxResults: 6
+    });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Tavily search timeout')), 4000)
+    );
+    response = await Promise.race([searchPromise, timeoutPromise]) as any;
+  } catch (err: any) {
+    console.warn(`[search] Tavily API notice: ${err?.message || err}. Continuing smoothly.`);
+    return [];
+  }
 
   try {
     db.prepare('INSERT INTO search_usage (query, provider) VALUES (?, ?)').run(query, 'tavily');
@@ -40,7 +76,7 @@ async function callTavilyAPI(query: string): Promise<SearchResult[]> {
     }
   }
 
-  return (response.results || []).map((r: any) => ({
+  return (response?.results || []).map((r: any) => ({
     title: r.title || 'Untitled',
     url: r.url || '',
     description: r.content || '',
@@ -101,3 +137,5 @@ export function getSearchUsageCount(): number {
 }
 
 export const getBraveUsageCount = getSearchUsageCount;
+
+export { buildSearchQuery };

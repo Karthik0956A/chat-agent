@@ -24,7 +24,13 @@ import { getSearchUsageCount } from './search';
 import db from './db';
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.options('*', cors());
 app.use(express.json());
 
 // Auth routes
@@ -37,6 +43,16 @@ app.use('/api/sessions', authMiddleware);
 app.use('/api/feedback', authMiddleware);
 app.use('/api/stats', authMiddleware);
 app.use('/api/profile', authMiddleware);
+app.use('/api/messages', authMiddleware);
+
+app.get('/api/messages/:sessionId', (req, res) => {
+  const userId = (req as any).userId;
+  const { sessionId } = req.params;
+  const rows = db.prepare(
+    'SELECT * FROM messages WHERE session_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT 100'
+  ).all(sessionId, userId) as any[];
+  res.json(rows.map(r => ({ ...r, tool_events: JSON.parse(r.tool_events || '[]') })));
+});
 
 app.get('/api/sessions', (req, res) => {
   const userId = (req as any).userId;
@@ -59,15 +75,38 @@ app.post('/api/chat/stream', async (req, res) => {
     return;
   }
 
+  const queryStartTime = Date.now();
+  console.log('\n================================================================');
+  console.log(`[STAGE 1: INCOMING REQUEST] User #${userId} | Session: ${sessionId}`);
+  console.log(`[STAGE 1: QUERY] "${message}"`);
+  console.log('----------------------------------------------------------------');
+
   ensureSession(sessionId, userId);
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
+  let isClientConnected = true;
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      isClientConnected = false;
+      console.log(`[STAGE: DISCONNECT] Client closed SSE stream connection.`);
+    }
+  });
+
   function sendSSE(event: string, data: unknown) {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (!isClientConnected || res.writableEnded || res.destroyed) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      if (typeof (res as any).flush === 'function') {
+        (res as any).flush();
+      }
+    } catch {
+      isClientConnected = false;
+    }
   }
 
   try {
@@ -89,11 +128,25 @@ app.post('/api/chat/stream', async (req, res) => {
       created_at: new Date().toISOString()
     });
 
+    // STAGE 2: PLANNING
+    console.log(`[STAGE 2: PLANNING] Starting intent routing and tool execution...`);
+    const planStartTime = Date.now();
     const toolEvents: import('./types').ToolEvent[] = [];
     const plannerResult = await runPlanner(message, sessionId, userId, (event) => {
       toolEvents.push(event);
       sendSSE('tool_event', event);
     });
+    console.log(`[STAGE 2: PLANNING COMPLETE] Finished in ${Date.now() - planStartTime}ms`);
+    console.log(`  -> Search results: ${plannerResult.searchResults.length}`);
+    console.log(`  -> Recalled facts: ${plannerResult.recalledFacts.length}`);
+    console.log(`  -> History matches: ${plannerResult.historyMatches.length}`);
+    console.log('----------------------------------------------------------------');
+
+    // STAGE 3: SYNTHESIS
+    console.log(`[STAGE 3: SYNTHESIS STREAMING] Starting LLM synthesis with context...`);
+    const synthStartTime = Date.now();
+    let firstTokenTime: number | null = null;
+    let tokenCount = 0;
 
     const profile = getUserProfile(userId);
     const recentTurns = getRecentTurns(sessionId, userId);
@@ -109,6 +162,11 @@ app.post('/api/chat/stream', async (req, res) => {
       profile.summary
     )) {
       if (chunk.token !== undefined) {
+        if (firstTokenTime === null) {
+          firstTokenTime = Date.now();
+          console.log(`[STAGE 3: FIRST TOKEN] Emitted first token in ${firstTokenTime - synthStartTime}ms from synthesis start`);
+        }
+        tokenCount++;
         fullAnswer += chunk.token;
         sendSSE('token', { token: chunk.token });
       }
@@ -116,6 +174,8 @@ app.post('/api/chat/stream', async (req, res) => {
         extractedFacts = chunk.facts;
       }
     }
+    console.log(`[STAGE 3: SYNTHESIS COMPLETE] Streamed ${tokenCount} tokens (${fullAnswer.length} chars) in ${Date.now() - synthStartTime}ms`);
+    console.log('----------------------------------------------------------------');
 
     const assistantMsgId = saveMessage({
       session_id: sessionId,
@@ -135,24 +195,48 @@ app.post('/api/chat/stream', async (req, res) => {
       created_at: new Date().toISOString()
     });
 
+    // STAGE 4: FACT EXTRACTION
+    console.log(`[STAGE 4: FACT EXTRACTION] Parsed ${extractedFacts.length} candidate facts from response`);
+    const qualifiedFacts = extractedFacts.filter(f => f.importance >= 0.6);
+    console.log(`  -> Qualified persistent facts (importance >= 0.6): ${qualifiedFacts.length}`);
+
+    // STAGE 5: EMBEDDING & VECTOR STORAGE
     const storedEntities: string[] = [];
-    for (const fact of extractedFacts.filter(f => f.importance >= 0.6)) {
-      try {
-        const embedding = await embedText(`${fact.entity}: ${fact.claim}`);
-        upsertFact(userId, fact, embedding);
-        storedEntities.push(fact.entity);
-      } catch (err) {
-        console.error('[facts] Failed to embed/store fact:', err);
+    if (qualifiedFacts.length > 0) {
+      console.log('----------------------------------------------------------------');
+      console.log(`[STAGE 5: EMBEDDING & STORAGE] Generating vector embeddings and saving facts...`);
+      const embedStartTime = Date.now();
+      for (const fact of qualifiedFacts) {
+        try {
+          const t0 = Date.now();
+          console.log(`  -> [EMBEDDING] Embedding "${fact.entity}: ${fact.claim}"...`);
+          const embedding = await embedText(`${fact.entity}: ${fact.claim}`);
+          console.log(`  -> [EMBEDDING COMPLETE] Dimension: ${embedding.length} (${Date.now() - t0}ms)`);
+          upsertFact(userId, fact, embedding);
+          console.log(`  -> [STORAGE] Fact for entity "${fact.entity}" stored in SQLite.`);
+          storedEntities.push(fact.entity);
+        } catch (err) {
+          console.error('[facts] Failed to embed/store fact:', err);
+        }
       }
+      console.log(`[STAGE 5: EMBEDDING & STORAGE COMPLETE] Stored ${storedEntities.length} fact(s) in ${Date.now() - embedStartTime}ms`);
+    } else {
+      console.log(`[STAGE 5: EMBEDDING & STORAGE] Skipped (no persistent facts needed)`);
     }
 
     sendSSE('done', { messageId: assistantMsgId, facts_stored: storedEntities });
+
+    console.log('================================================================');
+    console.log(`[QUERY COMPLETE] Total round-trip time: ${Date.now() - queryStartTime}ms`);
+    console.log('================================================================\n');
 
   } catch (err: any) {
     console.error('[stream] Error in chat stream:', err);
     sendSSE('error', { message: err.message || 'Internal error processing request' });
   } finally {
-    res.end();
+    if (!res.writableEnded) {
+      try { res.end(); } catch {}
+    }
   }
 });
 

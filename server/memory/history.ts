@@ -95,3 +95,20 @@ export function getUserProfile(userId: number): { summary: string; topics: strin
     key_entities: JSON.parse(row.key_entities || '{}')
   };
 }
+
+export function getNearbyConversationDates(userId: number, targetDateStr: string, rangeDays: number = 3): string[] {
+  try {
+    const target = new Date(targetDateStr);
+    if (isNaN(target.getTime())) return [];
+    const start = new Date(target.getTime() - rangeDays * 86400000).toISOString();
+    const end = new Date(target.getTime() + rangeDays * 86400000).toISOString();
+    const rows = db.prepare(`
+      SELECT DISTINCT date(created_at) as day FROM messages
+      WHERE user_id = ? AND created_at >= ? AND created_at <= ?
+      ORDER BY day
+    `).all(userId, start, end) as any[];
+    return rows.map((r: any) => r.day);
+  } catch {
+    return [];
+  }
+}

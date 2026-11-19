@@ -3,6 +3,42 @@ import { SearchResult, Fact, Message, ExtractedFact } from './types';
 import dotenv from 'dotenv';
 dotenv.config();
 
+function getSafeModelName(name?: string): string {
+  if (!name) return 'gemini-3-flash-preview';
+  let m = name.trim();
+  if (m === 'gemini-3.1-flash-preview' || m === 'gemini-3.1-pro-preview') return 'gemini-3-flash-preview';
+  if (m.includes('pro')) return 'gemini-3-flash-preview';
+  if (m === 'gemini-2.0-flash' || m === 'gemini-2.0-pro') return 'gemini-2.5-flash';
+  return m;
+}
+
+const CANDIDATE_SYNTHESIZER_MODELS = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-3.5-flash-lite'];
+
+function formatGeminiHistory(turns: Message[]): { role: 'user' | 'model'; parts: { text: string }[] }[] {
+  const result: { role: 'user' | 'model'; parts: { text: string }[] }[] = [];
+  const valid = turns.filter(m => m.content && m.content.trim());
+  
+  // Find first user message (Gemini strictly requires history to start with role 'user')
+  const firstUserIdx = valid.findIndex(m => m.role === 'user');
+  if (firstUserIdx === -1) return [];
+
+  for (let i = firstUserIdx; i < valid.length; i++) {
+    const role: 'user' | 'model' = valid[i].role === 'user' ? 'user' : 'model';
+    if (result.length > 0 && result[result.length - 1].role === role) {
+      result[result.length - 1].parts[0].text += '\n' + valid[i].content;
+    } else {
+      result.push({ role, parts: [{ text: valid[i].content }] });
+    }
+  }
+
+  // Remove trailing user turn so chat.sendMessage() supplies the next user turn
+  if (result.length > 0 && result[result.length - 1].role === 'user') {
+    result.pop();
+  }
+
+  return result;
+}
+
 export async function* streamSynthesis(
   userMessage: string,
   recentTurns: Message[],
@@ -67,31 +103,66 @@ Guidelines:
 - When answering questions about past decisions, shortlist items, or past dates: reference the remembered facts or past conversations accurately.
 - If a fact has changed since you previously discussed it (e.g. pricing, features, announcements), explicitly highlight the difference: "Previously it was X, but currently it is Y".
 - Cite fresh sources inline using [1], [2], etc., matching the search results.
+- CRITICAL — History Accuracy: If the user asks about a specific date/day/time and the historyMatches context is empty or the relevant past conversation turns section shows nothing matching that date, you MUST state clearly "I found no conversation from [the requested date]". If you do have nearby dates from the conversation history, suggest them: "However, you spoke about X on [nearby date] — is that what you meant?". NEVER fabricate or hallucinate past conversations.
 - At the very end of your response, output a <FACTS> block with any critical facts worth remembering:
   <FACTS>{"facts":[{"entity":"Entity Name","claim":"Specific verifiable fact or pricing","source_url":"optional url","importance":0.0-1.0}]}</FACTS>
   Assign importance >= 0.6 only for valuable facts (shortlists, pricing, tools chosen, architecture decisions). Do not output the <FACTS> tag if there is nothing worth storing.`;
 
-  const history = recentTurns.map(m => ({
-    role: m.role === 'user' ? 'user' as const : 'model' as const,
-    parts: [{ text: m.content }]
-  }));
+  const history = formatGeminiHistory(recentTurns);
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: process.env.SYNTHESIZER_MODEL || 'gemini-2.0-flash',
-    systemInstruction: systemPrompt
-  });
-
-  const chat = model.startChat({ history });
+  const targetModel = getSafeModelName(process.env.SYNTHESIZER_MODEL);
+  const modelCandidates = Array.from(new Set([targetModel, ...CANDIDATE_SYNTHESIZER_MODELS]));
   const messageWithContext = context ? `${userMessage}\n\n---\n${context}` : userMessage;
-  const stream = await chat.sendMessageStream(messageWithContext);
+
+  let stream: any = null;
+  let activeModel = targetModel;
+
+  for (const candidate of modelCandidates) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: candidate,
+        systemInstruction: systemPrompt,
+        generationConfig: {
+          // @ts-ignore
+          thinkingConfig: { thinkingBudget: 0 }
+        }
+      });
+      const chat = model.startChat({ history });
+      stream = await chat.sendMessageStream(messageWithContext);
+      activeModel = candidate;
+      console.log(`  -> [SYNTHESIS ENGINE] Active model: ${activeModel} (zero-thinking fast streaming)`);
+      break;
+    } catch (err: any) {
+      console.warn(`[synthesizer] Model ${candidate} notice: ${err?.message || err}. Trying next fallback...`);
+    }
+  }
+
+  if (!stream) {
+    const fallbackText = `I encountered a temporary service limitation contacting Gemini. Here is what I retrieved:\n\n` +
+      (searchResults.length > 0 ? searchResults.map((s, idx) => `[${idx + 1}] **${s.title}**\n${s.description}\nSource: ${s.url}`).join('\n\n') : 'Please try your query again.');
+    for (const char of fallbackText) {
+      yield { token: char };
+    }
+    yield { facts: [] };
+    return;
+  }
 
   let fullText = '';
-  for await (const chunk of stream.stream) {
-    const token = chunk.text();
-    fullText += token;
-    if (!fullText.includes('<FACTS>')) {
-      yield { token };
+  try {
+    for await (const chunk of stream.stream) {
+      const token = chunk.text();
+      fullText += token;
+      if (!fullText.includes('<FACTS>')) {
+        yield { token };
+      }
+    }
+  } catch (streamErr: any) {
+    console.warn(`[synthesizer] Stream interrupted on ${activeModel}:`, streamErr?.message || streamErr);
+    if (!fullText) {
+      const errNotice = `\n\n*(Notice: streaming connection closed early. Displaying available search context:)*\n` +
+        searchResults.map(s => `- ${s.title}: ${s.description}`).join('\n');
+      yield { token: errNotice };
     }
   }
 
